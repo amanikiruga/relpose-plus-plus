@@ -520,7 +520,7 @@ class Trainer(object):
         )
 
         self.writer.add_figure("Translation Visualization", fig, self.iteration)
-        wandb.log({'Translation Visualization': plt})
+        wandb.log({'translation_visualization': fig})
 
         fig.clear()
         plt.close(fig)
@@ -551,7 +551,8 @@ class Trainer(object):
             for im in range(len(visuals2d)):
                 images.append(visuals2d[im][batch])
             full_image = np.hstack(images)
-            wandb.log({f'Visualization {batch}': wandb.Image(full_image)})
+            # wandb.log({f'Visualization {batch}': wandb.Image(full_image)})
+            wandb.log({f'rotation_visualization': wandb.Image(full_image)})
             self.writer.add_image(
                 f"Visualization {batch}", full_image, self.iteration, dataformats="HWC"
             )
@@ -577,6 +578,8 @@ if __name__ == "__main__":
         wandb.define_metric("Loss/rotations", step_metric="elapsed_time_secs")
         wandb.define_metric("Loss/translations", step_metric="elapsed_time_secs")
         wandb.define_metric("iteration", step_metric="elapsed_time_secs")
+        wandb.define_metric("translation_visualization", step_metric="elapsed_time_secs")
+        wandb.define_metric("rotation_visualization", step_metric="elapsed_time_secs")
 
         
         trainer = Trainer(args)
