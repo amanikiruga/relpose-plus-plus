@@ -22,7 +22,7 @@ NUM_PAIRWISE_QUERIES = 500_000
 
 def get_n_features(model, num_frames, images, crop_params):
     crop_pe = model.positional_encoding(crop_params)
-    features = model.feature_extractor(images, crop_pe=crop_pe)
+    features = model.feature_extractor(images, crop_pe=crop_pe, device = images.device)
     return features.reshape((1, num_frames, model.full_feature_dim, 1, 1))
 
 
@@ -325,40 +325,44 @@ def evaluate_category_rotation(
     for metadata in iterable:
         # Load instance data
         sequence_name = metadata["model_id"]
-        key_frames = order[sequence_name][:num_frames]
-        batch = dataset.get_data(sequence_name=sequence_name, ids=key_frames)
+        try: 
+            key_frames = order[sequence_name][:num_frames]
+            batch = dataset.get_data(sequence_name=sequence_name, ids=key_frames)
 
-        # Load ground truth rotations
-        rotations = batch["relative_rotation"].to(device).unsqueeze(0)
-        n_p = len(get_permutations(num_frames, eval_time=True))
-        R_gt_rel = rotations.detach().cpu().numpy().reshape((n_p, 3, 3))
+            # Load ground truth rotations
+            rotations = batch["relative_rotation"].to(device).unsqueeze(0)
+            n_p = len(get_permutations(num_frames, eval_time=True))
+            R_gt_rel = rotations.detach().cpu().numpy().reshape((n_p, 3, 3))
 
-        # Inputs
-        images = batch["image"].to(device).unsqueeze(0)
-        crop_params = batch["crop_params"].to(device).unsqueeze(0)
+            # Inputs
+            # images = batch["image"].to(device).unsqueeze(0)
+            images = batch["svd_features"].to(device).unsqueeze(0)
+            crop_params = batch["crop_params"].to(device).unsqueeze(0)
 
-        # Model forward pass
-        EVAL_FN_MAP = {
-            "pairwise": evaluate_pairwise,
-            "coordinate_ascent": evaluate_coordinate_ascent,
-        }
-        R_pred_rel, _ = EVAL_FN_MAP[mode](
-            model,
-            images,
-            crop_params,
-        )
+            # Model forward pass
+            EVAL_FN_MAP = {
+                "pairwise": evaluate_pairwise,
+                "coordinate_ascent": evaluate_coordinate_ascent,
+            }
+            R_pred_rel, _ = EVAL_FN_MAP[mode](
+                model,
+                images,
+                crop_params,
+            )
 
-        # Compute errors
-        errors = compute_angular_error_batch(R_pred_rel, R_gt_rel)
+            # Compute errors
+            errors = compute_angular_error_batch(R_pred_rel, R_gt_rel)
 
-        # Append information to be saved
-        angular_errors.extend(errors)
-        all_errors[sequence_name] = {
-            "R_pred_rel": R_pred_rel.tolist(),
-            "R_gt_rel": R_gt_rel.tolist(),
-            "angular_errors": errors.tolist(),
-            "key_frames": key_frames,  # .tolist(),
-        }
+            # Append information to be saved
+            angular_errors.extend(errors)
+            all_errors[sequence_name] = {
+                "R_pred_rel": R_pred_rel.tolist(),
+                "R_gt_rel": R_gt_rel.tolist(),
+                "angular_errors": errors.tolist(),
+                "key_frames": key_frames,  # .tolist(),
+            }
+        except: 
+            continue
 
     # Save to file
     with open(path, "w") as f:

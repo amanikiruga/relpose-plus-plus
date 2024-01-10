@@ -232,27 +232,31 @@ class GlobalFeatures(nn.Module):
             self.transformer, nn.LayerNorm(self.feature_dim)
         )
 
-    def forward(self, images, crop_pe=None):
-        batch_size = images.shape[0]
-        num_tokens = images.shape[1]
+    def forward(self, svd_features, device, crop_pe=None):
+        batch_size = svd_features.shape[0]
+        num_tokens = svd_features.shape[1]
 
         if crop_pe is None:
             features = torch.zeros(
-                (batch_size, num_tokens, self.feature_dim), device=images.device
+                (batch_size, num_tokens, self.feature_dim), device=device
             )
             for i in range(batch_size):
-                features[i] = self.feature_extractor(images[i]).reshape(
-                    (num_tokens, self.feature_dim)
-                )
+                features[i] = svd_features[i].reshape((num_tokens, self.feature_dim))
             features = self.feature_positional_encoding(features)
             features = self.transformer(features)
         else:
             features = torch.zeros(
-                (batch_size, num_tokens, self.feature_dim), device=images.device
+                (batch_size, num_tokens, self.feature_dim), device=device
             )
+            
             for i in range(batch_size):
-                resnet_feature = self.feature_extractor(images[i]).squeeze()
-                features[i] = torch.cat((resnet_feature, crop_pe[i]), dim=-1)
+                features[i] = torch.cat(
+                    (
+                        svd_features[i].squeeze(),
+                        crop_pe[i],
+                    ),
+                    dim=-1,
+                )
             features = self.feature_positional_encoding(features)
             features = self.transformer(features)
 

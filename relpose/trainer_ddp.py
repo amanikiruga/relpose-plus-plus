@@ -29,6 +29,8 @@ from torch.utils.tensorboard import SummaryWriter
 from dataset import TRAINING_CATEGORIES, get_dataloader
 from models import RelPose
 from utils import get_permutations, make_visualization_n
+import wandb
+import sys
 
 matplotlib.use("Agg")
 
@@ -79,6 +81,9 @@ def get_parser():
         action="store_true",
         help="Use masks to white out the background.",
     )
+    parser.add_argument("--feature_dim", type=int, default=2048)
+    parser.add_argument("--experiment_name", default="relposepp", type=str, help="Name of experiment")
+    parser.add_argument("--max_sequences", type=int, default=-1)
     return parser
 
 
@@ -133,7 +138,8 @@ class Trainer(object):
         self.iteration = 0
         self.epoch = 0
 
-        num_workers = self.num_gpus * 4
+        # num_workers = self.num_gpus * 4
+        num_workers = 0
         if self.category[0] == "all":
             self.category = TRAINING_CATEGORIES
 
@@ -150,6 +156,7 @@ class Trainer(object):
             first_camera_transform=self.first_camera_transform,
             img_size=224,
             mask_images=self.mask_images,
+            max_sequences = args.max_sequences
         )
 
         os.environ["NCCL_DEBUG"] = "INFO"
@@ -163,6 +170,7 @@ class Trainer(object):
             num_pe_bases=8,
             hidden_size=256,
             num_queries=36864,
+            feature_dim = args.feature_dim,
             num_images=self.num_images,
         )
 
@@ -179,7 +187,7 @@ class Trainer(object):
         self.net.to(device_id)
         torch.cuda.set_device(device_id)
 
-        self.net = DDP(self.net, device_ids=[device_id], find_unused_parameters=False)
+        self.net = DDP(self.net, device_ids=[device_id], find_unused_parameters=True)
 
         print(f"Process {self.rank} on device {device_id}")
 
@@ -246,11 +254,19 @@ class Trainer(object):
             for batch in self.dataloader:
                 self.optimizer.zero_grad(set_to_none=True)
 
+                # Check for NaN in inputs
+                if torch.isnan(batch["image"]).any():
+                    print(f"Iteration {self.iteration}: NaN detected in input images")
+                if torch.isnan(batch["svd_features"]).any():
+                    print(f"Iteration {self.iteration}: NaN detected in input svd_features")
+
                 with torch.autocast(
                     enabled=self.amp, device_type="cuda", dtype=torch.float16
                 ):
                     # Inputs & ground truths
                     images = batch["image"].to(self.device, non_blocking=True)
+                    svd_features = batch["svd_features"].to(self.device, non_blocking=True)
+
                     relative_rotations = batch["relative_rotation"].to(
                         self.device, non_blocking=True
                     )
@@ -262,9 +278,10 @@ class Trainer(object):
                     # Handle variable number of images
                     n = self.num_images
                     if self.random_num_images:
-                        n = np.random.randint(2, self.num_images + 1)
+                        n = min(np.random.randint(2, self.num_images + 1), 8)
                         n_c = len(get_permutations(n))
                         images = images[:, :n]
+                        svd_features = svd_features[:, :n]
                         relative_rotations = relative_rotations[:, :n_c]
                         crop_params = crop_params[:, :n]
                         truth = truth[:, :n]
@@ -276,6 +293,7 @@ class Trainer(object):
                         predicted_translations,
                     ) = self.net(
                         images=images,
+                        svd_features=svd_features,
                         gt_rotation=relative_rotations,
                         crop_params=crop_params,
                         take_softmax=False,
@@ -335,6 +353,13 @@ class Trainer(object):
                         self.writer.add_scalar(
                             "Loss/translations", loss_trans.item(), self.iteration
                         )
+                         # Log metrics to wandb
+                        wandb.log({
+                            'Loss/train': loss.item(),
+                            'Loss/rotations': loss_rot.item(),
+                            'Loss/translations': loss_trans.item(),
+                            'iteration': self.iteration
+                        })
 
                     # Log visualization to board
                     if self.iteration % self.interval_visualize == 0 and n < 5:
@@ -464,6 +489,7 @@ class Trainer(object):
         )
 
         self.writer.add_figure("Translation Visualization", fig, self.iteration)
+        wandb.log({'Translation Visualization': wandb.Image(plt)})
 
         fig.clear()
         plt.close(fig)
@@ -494,10 +520,13 @@ class Trainer(object):
             for im in range(len(visuals2d)):
                 images.append(visuals2d[im][batch])
             full_image = np.hstack(images)
+            wandb.log({f'Visualization {batch}': wandb.Image(full_image)})
             self.writer.add_image(
                 f"Visualization {batch}", full_image, self.iteration, dataformats="HWC"
             )
             print("Visualizing for batch")
+
+
 
 
 if __name__ == "__main__":
@@ -509,5 +538,9 @@ if __name__ == "__main__":
         torch.backends.cudnn.benchmark = True
         if args.use_tf32:
             torch.set_float32_matmul_precision("medium")
+        
+        wandb.init(project="stable-video-diffusion", name=args.experiment_name)
         trainer = Trainer(args)
         trainer.train()
+        wandb.finish()
+

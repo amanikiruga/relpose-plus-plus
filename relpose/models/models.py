@@ -129,6 +129,7 @@ class RelPose(nn.Module):
         gt_rotation=None,
         queries=None,
         images=None,
+        svd_features=None,
         crop_params=None,
         take_softmax=True,
         eval_time=False,
@@ -150,7 +151,7 @@ class RelPose(nn.Module):
         num_tokens = images.shape[1]
 
         crop_pe = self.positional_encoding(crop_params)
-        features = self.feature_extractor(images, crop_pe=crop_pe)
+        features = self.feature_extractor(svd_features, device = images.device, crop_pe=crop_pe)
 
         permutations = get_permutations(num_tokens, eval_time=eval_time)
         queries_to_return = self.num_queries

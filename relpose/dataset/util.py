@@ -20,6 +20,7 @@ def get_dataloader(
     first_camera_transform=False,
     first_camera_rotation_only=False,
     mask_images=False,
+    max_sequences = -1
 ):
     if debug:
         num_workers = 0
@@ -35,6 +36,7 @@ def get_dataloader(
             first_camera_transform=first_camera_transform,
             first_camera_rotation_only=first_camera_rotation_only,
             mask_images=mask_images,
+            max_sequences = max_sequences
         )
     else:
         raise Exception(f"Unknown dataset: {dataset}")

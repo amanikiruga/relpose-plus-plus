@@ -112,58 +112,65 @@ def evaluate_category_translation(
     for metadata in iterable:
         # Calculate scene scale in annotation frame
         sequence_name = metadata["model_id"]
-        key_frames = order[sequence_name][:num_frames]
-        all_cams_batch = dataset.get_data(
-            sequence_name=sequence_name, ids=np.arange(0, metadata["n"]), no_images=True
-        )
-        gt_scene_scale = full_scene_scale(all_cams_batch)
-
-        # Get model inputs and ground truth pose
-        batch = dataset.get_data(sequence_name=sequence_name, ids=key_frames)
-        images = batch["image"].to(device).unsqueeze(0)
-        crop_params = batch["crop_params"].to(device).unsqueeze(0)
-        R_gt = batch["R"].to(device)
-        T_gt = batch["T"].to(device)
-
-        # Model forward pass
-        with torch.no_grad():
-            out = model(
-                images=images,
-                crop_params=crop_params,
+        try: 
+            key_frames = order[sequence_name][:num_frames]
+            all_cams_batch = dataset.get_data(
+                sequence_name=sequence_name, ids=np.arange(0, metadata["n"]), no_images=True
             )
-            _, _, T_pred = out
+            gt_scene_scale = full_scene_scale(all_cams_batch)
 
-        # Read rotations from input directory
-        f = open(
-            os.path.join(
-                checkpoint_path,
-                f"eval/coordinate_ascent-{num_frames:03d}-sample{sample_num}",
-                f"{category}.json",
+            # Get model inputs and ground truth pose
+            batch = dataset.get_data(sequence_name=sequence_name, ids=key_frames)
+            # images = batch["image"].to(device).unsqueeze(0)
+            images = batch["svd_features"].to(device).unsqueeze(0)
+            crop_params = batch["crop_params"].to(device).unsqueeze(0)
+            R_gt = batch["R"].to(device)
+            T_gt = batch["T"].to(device)
+
+            # Model forward pass
+            with torch.no_grad():
+                out = model(
+                    images=images,
+                    svd_features=images,
+                    crop_params=crop_params,
+                )
+                _, _, T_pred = out
+
+            # Read rotations from input directory
+            f = open(
+                os.path.join(
+                    checkpoint_path,
+                    f"eval/coordinate_ascent-{num_frames:03d}-sample{sample_num}",
+                    f"{category}.json",
+                )
             )
-        )
-        rotations_json = json.load(f)
-        R_pred = torch.from_numpy(
-            np.asarray(rotations_json[sequence_name]["R_pred_rel"])
-        )
-        R_pred_n = get_n_consistent_cameras(R_pred, num_frames).to(images.device)
+            rotations_json = json.load(f)
+            R_pred = torch.from_numpy(
+                np.asarray(rotations_json[sequence_name]["R_pred_rel"])
+            )
+            R_pred_n = get_n_consistent_cameras(R_pred, num_frames).to(images.device)
 
-        # Calculate translation error
-        norms, A_hat = get_error(mode, R_pred_n, T_pred, R_gt, T_gt, gt_scene_scale)
+            # Calculate translation error
+            norms, A_hat = get_error(mode, R_pred_n, T_pred, R_gt, T_gt, gt_scene_scale)
 
-        # Append information to be saved
-        translation_errors.extend(norms)
-        all_errors[sequence_name] = {
-            "R_pred": R_pred_n.tolist(),
-            "T_pred": T_pred.tolist(),
-            "errors": norms,
-            "scale": gt_scene_scale,
-            "A_hat": A_hat.tolist(),
-        }
+            # Append information to be saved
+            translation_errors.extend(norms)
+            all_errors[sequence_name] = {
+                "R_pred": R_pred_n.tolist(),
+                "T_pred": T_pred.tolist(),
+                "errors": norms,
+                "scale": gt_scene_scale,
+                "A_hat": A_hat.tolist(),
+            }
 
+        except Exception as e: 
+            print(e)
+            continue
     # Save to file
     if save_dir is not None:
         with open(path, "w") as f:
             json.dump(all_errors, f)
-
+    print(len(translation_errors))
     print(np.average(np.array(translation_errors) < 0.2))
+    print(translation_errors[:10])
     return np.array(translation_errors)

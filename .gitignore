@@ -10,6 +10,11 @@ weights/*
 .DS_Store
 *.zip
 *.html
+/caviness
+/relposepp
+relposepp_masked
+
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

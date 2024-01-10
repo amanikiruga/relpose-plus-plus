@@ -1,10 +1,12 @@
 import gzip
 import json
+import os
 import os.path as osp
 import random
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from PIL import Image, ImageFile
 from pytorch3d.renderer import PerspectiveCameras
 from torch.utils.data import Dataset
@@ -14,8 +16,12 @@ from utils.bbox import square_bbox
 from utils.misc import get_permutations
 from utils.normalize_cameras import first_camera_transform, normalize_cameras
 
-CO3D_DIR = "data/co3d_v2"
-CO3D_ANNOTATION_DIR = "data/co3d_v2_annotations"
+import sys
+
+CO3D_DIR = "/lustre/scratch/diff/datasets/CO3Dv2"
+CO3D_ANNOTATION_DIR = "/lustre/scratch/diff/datasets/CO3Dv2/hydrant/annotations"
+CO3D_FEATURES_DIR = "/lustre/scratch/diff/datasets/hydrant/features"
+
 
 TRAINING_CATEGORIES = [
     "apple",
@@ -78,6 +84,23 @@ Image.MAX_IMAGE_PIXELS = None
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
+class CustomTransform:
+    """Custom Transformation: Converts Tensor to PIL if necessary and applies resizing and cropping"""
+
+    def __init__(self):
+        self.transform = transforms.Compose(
+            [
+                transforms.Resize(576),  # Resize to 576x1024
+                transforms.CenterCrop((576, 1024)),  # Center crop to 576x1024
+            ]
+        )
+
+    def __call__(self, img):
+        if torch.is_tensor(img):
+            img = transforms.ToPILImage()(img)
+        return self.transform(img)
+
+
 class Co3dDataset(Dataset):
     def __init__(
         self,
@@ -96,6 +119,7 @@ class Co3dDataset(Dataset):
         first_camera_transform=False,
         first_camera_rotation_only=False,
         mask_images=False,
+        max_sequences = -1
     ):
         """
         Args:
@@ -128,6 +152,10 @@ class Co3dDataset(Dataset):
         self.low_quality_translations = []
         self.rotations = {}
         self.category_map = {}
+        feature_sequence_list = [
+            x.split("features")[0][:-1] for x in os.listdir(CO3D_FEATURES_DIR)
+        ]
+
         for c in category:
             annotation_file = osp.join(CO3D_ANNOTATION_DIR, f"{c}_{split_name}.jgz")
             with gzip.open(annotation_file, "r") as fin:
@@ -136,18 +164,30 @@ class Co3dDataset(Dataset):
             counter = 0
             for seq_name, seq_data in annotation.items():
                 counter += 1
+                if seq_name not in feature_sequence_list:
+                    continue
+                # for debugging
+                if max_sequences != -1 and counter > max_sequences: 
+                    break 
                 if len(seq_data) < num_images:
                     continue
 
                 filtered_data = []
                 self.category_map[seq_name] = c
                 bad_seq = False
-                for data in seq_data:
+
+                svd_features = torch.load(
+                    osp.join(CO3D_FEATURES_DIR, f"{seq_name}_features.pt")
+                )
+                for i, data in enumerate(seq_data):
                     # Make sure translations are not ridiculous
                     if data["T"][0] + data["T"][1] + data["T"][2] > 1e5:
                         bad_seq = True
                         self.low_quality_translations.append(seq_name)
                         break
+                    
+                    if i >= len(svd_features): 
+                        continue
 
                     # Ignore all unnecessary information.
                     filtered_data.append(
@@ -158,6 +198,7 @@ class Co3dDataset(Dataset):
                             "T": data["T"],
                             "focal_length": data["focal_length"],
                             "principal_point": data["principal_point"],
+                            "svd_features": svd_features[i],
                         },
                     )
 
@@ -242,7 +283,9 @@ class Co3dDataset(Dataset):
     def __getitem__(self, index):
         sequence_name = self.sequence_list[index]
         metadata = self.rotations[sequence_name]
-        ids = np.random.choice(len(metadata), self.num_images, replace=False)
+        ids = np.random.choice(
+            len(metadata) - (len(metadata) % 25), self.num_images, replace=False
+        )
         return self.get_data(index=index, ids=ids)
 
     def get_data(self, index=None, sequence_name=None, ids=(0, 1), no_images=False):
@@ -313,6 +356,42 @@ class Co3dDataset(Dataset):
 
         images = images_transformed
 
+        # # Instantiate the custom transformation
+        # svd_transforms = CustomTransform()
+
+        # svd_transformed_images = [svd_transforms(img) for img in images_transformed]
+        # # with torch.no_grad():
+        # _, extracted_features = pipe(
+        #     svd_transformed_images[0],
+        #     decode_chunk_size=8,
+        #     generator=generator,
+        #     num_inference_steps=1,
+        #     feat_images=svd_transformed_images,
+        # )
+
+        # _, chunk_features = extracted_features.chunk(2)
+
+        # print(
+        #     f"dbg-svd_features {chunk_features.shape=} {chunk_features.dtype=} {chunk_features.device=} {chunk_features.requires_grad=} "
+        # )
+
+        # chunk_features = chunk_features.cpu().float()
+
+        svd_features = torch.stack(
+            [torch.tensor(anno["svd_features"]) for anno in annos]
+        )
+
+        svd_features = svd_features.float()
+
+        # print(
+        #     f"dbg-svd_features {svd_features.shape=} {svd_features.dtype=} {svd_features.device=} {svd_features.requires_grad=} "
+        # )
+
+        # Global average pooling
+        svd_features = F.avg_pool2d(
+            svd_features, kernel_size=svd_features.size()[-2:]
+        ).squeeze()
+
         batch = {
             "model_id": sequence_name,
             "category": category,
@@ -368,7 +447,11 @@ class Co3dDataset(Dataset):
         for k, t in enumerate(permutations):
             i, j = t
             relative_rotation[k] = rotations[i].T @ rotations[j]
+
         batch["relative_rotation"] = relative_rotation
+
+        # add features
+        batch["svd_features"] = svd_features
 
         # Add images
         if self.transform is None:
