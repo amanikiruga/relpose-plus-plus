@@ -216,7 +216,8 @@ class Trainer(object):
 
             del checkpoint, feature_extractor_state_dict
             torch.cuda.empty_cache()
-
+        
+        self.start_time = time.time()
         if osp.exists(args.resume):
             self.output_dir = args.resume
             self.checkpoint_dir = osp.join(self.output_dir, "checkpoints")
@@ -224,7 +225,6 @@ class Trainer(object):
             self.load_model(osp.join(self.checkpoint_dir, last_checkpoint))
         else:
             self.output_dir = generate_name(args) if args.resume == "" else args.resume
-            self.start_time = time.time()
             self.checkpoint_dir = osp.join(self.output_dir, "checkpoints")
 
         dist.barrier()
@@ -254,11 +254,12 @@ class Trainer(object):
             for batch in self.dataloader:
                 self.optimizer.zero_grad(set_to_none=True)
 
+                
                 # Check for NaN in inputs
                 if torch.isnan(batch["image"]).any():
-                    print(f"Iteration {self.iteration}: NaN detected in input images")
+                    print(f"Iteration {self.iteration}: NaN detected in input images", file=sys.stderr)
                 if torch.isnan(batch["svd_features"]).any():
-                    print(f"Iteration {self.iteration}: NaN detected in input svd_features")
+                    print(f"Iteration {self.iteration}: NaN detected in input svd_features", file=sys.stderr)
 
                 with torch.autocast(
                     enabled=self.amp, device_type="cuda", dtype=torch.float16
@@ -299,8 +300,16 @@ class Trainer(object):
                         take_softmax=False,
                     )
 
+                    # Check for NaN in outputs
+                    if torch.isnan(predicted_translations).any():
+                        print(f"Iteration {self.iteration}: NaN detected in predicted translations", file=sys.stderr)
+
                     # Rotation loss
                     loss_rot = -torch.mean(torch.log_softmax(logits, dim=-1)[:, :, 0])
+                    
+                    if torch.isnan(loss_rot).any():
+                        print(f"Iteration {self.iteration}: NaN detected in rotation loss", file=sys.stderr)
+
 
                     # Translation loss
                     num_batches = images.shape[0]
@@ -311,14 +320,30 @@ class Trainer(object):
                     l1 = L1Loss()
                     loss_trans = l1(predicted_translations, truth)
 
+                    if torch.isnan(loss_trans).any():
+                        print(f"Iteration {self.iteration}: NaN detected in translation loss", file=sys.stderr)
+
+
                 loss = loss_rot + loss_trans
+                if torch.isnan(loss).any():
+                    print(f"Iteration {self.iteration}: NaN detected in total loss", file=sys.stderr)
+
 
                 if self.amp:
                     self.scaler.scale(loss).backward()
+                    # Check gradients for NaN
+                    for name, param in self.net.named_parameters():
+                        if param.grad is not None and torch.isnan(param.grad).any():
+                            print(f"Iteration {self.iteration}: NaN detected in gradient of {name}", file=sys.stderr)
+                    
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
                 else:
                     loss.backward()
+                    # Check gradients for NaN
+                    for name, param in self.net.named_parameters():
+                        if param.grad is not None and torch.isnan(param.grad).any():
+                            print(f"Iteration {self.iteration}: NaN detected in gradient of {name}", file=sys.stderr)
                     self.optimizer.step()
 
                 self.iteration += 1
@@ -353,12 +378,18 @@ class Trainer(object):
                         self.writer.add_scalar(
                             "Loss/translations", loss_trans.item(), self.iteration
                         )
+                        elapsed_time = time.time() - self.start_training_time
+
+                        self.writer.add_scalar(
+                            'elapsed_time_secs',  elapsed_time, self.iteration
+                        )
                          # Log metrics to wandb
                         wandb.log({
                             'Loss/train': loss.item(),
                             'Loss/rotations': loss_rot.item(),
                             'Loss/translations': loss_trans.item(),
                             'iteration': self.iteration
+                            'elapsed_time_secs': elapsed_time,
                         })
 
                     # Log visualization to board
@@ -489,7 +520,7 @@ class Trainer(object):
         )
 
         self.writer.add_figure("Translation Visualization", fig, self.iteration)
-        wandb.log({'Translation Visualization': wandb.Image(plt)})
+        wandb.log({'Translation Visualization': plt})
 
         fig.clear()
         plt.close(fig)
@@ -531,6 +562,7 @@ class Trainer(object):
 
 if __name__ == "__main__":
     args = get_parser().parse_args()
+    print(f"Print error test! Consider this my hello world...", file=sys.stderr)
     if args.generate_name:
         name = generate_name(args)
         print(name)
@@ -540,6 +572,13 @@ if __name__ == "__main__":
             torch.set_float32_matmul_precision("medium")
         
         wandb.init(project="stable-video-diffusion", name=args.experiment_name)
+        wandb.define_metric("elapsed_time_secs")
+        wandb.define_metric("Loss/train", step_metric="elapsed_time_secs")
+        wandb.define_metric("Loss/rotations", step_metric="elapsed_time_secs")
+        wandb.define_metric("Loss/translations", step_metric="elapsed_time_secs")
+        wandb.define_metric("iteration", step_metric="elapsed_time_secs")
+
+        
         trainer = Trainer(args)
         trainer.train()
         wandb.finish()
