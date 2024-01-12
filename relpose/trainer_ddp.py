@@ -539,12 +539,12 @@ class Trainer(object):
 
 
 # Save figure to a BytesIO buffer and then log it to wandb
-import matplotlib.pyplot as plt
-import io
-fig = plt.figure(num=1, figsize=(12, 6))
-buffer = io.BytesIO()
-fig.savefig(buffer, format='png')
-buffer.seek(0)
+        import matplotlib.pyplot as plt
+        import io
+        fig = plt.figure(num=1, figsize=(12, 6))
+        buffer = io.BytesIO()
+        fig.savefig(buffer, format='png')
+        buffer.seek(0)
         wandb.log({'translation_visualization': wandb.Image(Image.open(buffer))})
         buffer.close()
 

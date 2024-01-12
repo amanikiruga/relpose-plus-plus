@@ -73,7 +73,7 @@ class RelPose(nn.Module):
             self.full_feature_dim,
             proj_input_dim = input_dim,
             proj_output_dim = feature_dim,
-            self.depth,
+            depth = self.depth,
         )
 
         self.translation_regressor = TranslationRegressor(
