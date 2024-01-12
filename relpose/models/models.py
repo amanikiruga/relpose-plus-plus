@@ -39,7 +39,6 @@ class RelPose(nn.Module):
         num_patches=1,
         patch_first=False,
         feature_dim=2048,
-        input_dim = 2048,
         depth=8,
     ):
         """
@@ -71,8 +70,6 @@ class RelPose(nn.Module):
         self.feature_extractor = GlobalFeatures(
             self.num_images,
             self.full_feature_dim,
-            proj_input_dim = input_dim,
-            proj_output_dim = feature_dim,
             depth = self.depth,
         )
 

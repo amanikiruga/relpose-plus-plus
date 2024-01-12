@@ -83,7 +83,7 @@ def get_parser():
         action="store_true",
         help="Use masks to white out the background.",
     )
-    parser.add_argument("--input_dim", type=int, default=2048)
+    parser.add_argument("--feature_dim", type=int, default=2048)
     parser.add_argument("--experiment_name", default="relposepp", type=str, help="Name of experiment")
     parser.add_argument("--max_sequences", type=int, default=-1)
     return parser
@@ -173,8 +173,7 @@ class Trainer(object):
             num_pe_bases=8,
             hidden_size=256,
             num_queries=36864,
-            feature_dim = 2048,
-            input_dim = args.input_dim, 
+            feature_dim = args.feature_dim,
             num_images=self.num_images,
         )
 

@@ -388,11 +388,10 @@ class Co3dDataset(Dataset):
         # )
 
         # # Global average pooling
-        # svd_features = F.avg_pool2d(
-        #     svd_features, kernel_size=svd_features.size()[-2:]
-        # ).squeeze()
+        svd_features = F.avg_pool2d(
+            svd_features, kernel_size=svd_features.size()[-2:]
+        ).squeeze()
 
-        svd_features = svd_features.reshape(svd_features.shape[0], -1)
 
         batch = {
             "model_id": sequence_name,

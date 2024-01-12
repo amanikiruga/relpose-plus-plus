@@ -216,11 +216,10 @@ class FeaturePositionalEncoding(nn.Module):
 
 
 class GlobalFeatures(nn.Module):
-    def __init__(self, num_images=2, feature_dim=2048, depth=8, stray_bn=False, proj_output_dim = 1280, proj_input_dim = 1280):
+    def __init__(self, num_images=2, feature_dim=2048, depth=8, stray_bn=False):
         super().__init__()
         self.num_images = num_images
         self.feature_dim = feature_dim
-        self.projection_head = nn.Linear(proj_input_dim, proj_output_dim)
 
         self.feature_positional_encoding = FeaturePositionalEncoding(
             self.num_images, self.feature_dim, 1
@@ -239,7 +238,7 @@ class GlobalFeatures(nn.Module):
                 (batch_size, num_tokens, self.feature_dim), device=device
             )
             for i in range(batch_size):
-                features[i] = self.projection_head(svd_features[i].reshape((num_tokens, self.feature_dim)))
+                features[i] = svd_features[i].reshape((num_tokens, self.feature_dim))
             features = self.feature_positional_encoding(features)
             features = self.transformer(features)
         else:
@@ -250,7 +249,7 @@ class GlobalFeatures(nn.Module):
             for i in range(batch_size):
                 features[i] = torch.cat(
                     (
-                        self.projection_head(svd_features[i].squeeze()),
+                        svd_features[i].squeeze(),
                         crop_pe[i],
                     ),
                     dim=-1,
