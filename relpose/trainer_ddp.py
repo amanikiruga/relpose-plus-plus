@@ -11,6 +11,7 @@ import argparse
 import datetime
 import json
 import os
+import io 
 import os.path as osp
 import shutil
 import time
@@ -25,6 +26,7 @@ from termcolor import colored
 from torch.nn import L1Loss
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
+from PIL import Image
 
 from dataset import TRAINING_CATEGORIES, get_dataloader
 from models import RelPose
@@ -81,7 +83,7 @@ def get_parser():
         action="store_true",
         help="Use masks to white out the background.",
     )
-    parser.add_argument("--feature_dim", type=int, default=2048)
+    parser.add_argument("--input_dim", type=int, default=2048)
     parser.add_argument("--experiment_name", default="relposepp", type=str, help="Name of experiment")
     parser.add_argument("--max_sequences", type=int, default=-1)
     return parser
@@ -136,6 +138,7 @@ class Trainer(object):
         self.mask_images = args.mask_images
 
         self.iteration = 0
+        self.gradient_threshold = 1e3
         self.epoch = 0
 
         # num_workers = self.num_gpus * 4
@@ -170,7 +173,8 @@ class Trainer(object):
             num_pe_bases=8,
             hidden_size=256,
             num_queries=36864,
-            feature_dim = args.feature_dim,
+            feature_dim = 2048,
+            input_dim = args.input_dim, 
             num_images=self.num_images,
         )
 
@@ -187,7 +191,7 @@ class Trainer(object):
         self.net.to(device_id)
         torch.cuda.set_device(device_id)
 
-        self.net = DDP(self.net, device_ids=[device_id], find_unused_parameters=True)
+        self.net = DDP(self.net, device_ids=[device_id], find_unused_parameters=False)
 
         print(f"Process {self.rank} on device {device_id}")
 
@@ -258,8 +262,10 @@ class Trainer(object):
                 # Check for NaN in inputs
                 if torch.isnan(batch["image"]).any():
                     print(f"Iteration {self.iteration}: NaN detected in input images", file=sys.stderr)
+                    continue 
                 if torch.isnan(batch["svd_features"]).any():
                     print(f"Iteration {self.iteration}: NaN detected in input svd_features", file=sys.stderr)
+                    continue 
 
                 with torch.autocast(
                     enabled=self.amp, device_type="cuda", dtype=torch.float16
@@ -335,6 +341,11 @@ class Trainer(object):
                     for name, param in self.net.named_parameters():
                         if param.grad is not None and torch.isnan(param.grad).any():
                             print(f"Iteration {self.iteration}: NaN detected in gradient of {name}", file=sys.stderr)
+                        elif param.grad is not None and torch.abs(param.grad).max() > self.gradient_threshold:  # Define gradient_threshold as per your requirement
+                            print(f"Iteration {self.iteration}: Large gradient detected in {name} with max value {torch.abs(param.grad).max()}", file=sys.stderr)
+                        elif param.grad is None: 
+                            print(f"Iteration {self.iteration}: Gradient {name} is detected None", file=sys.stderr)
+                
                     
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
@@ -344,6 +355,11 @@ class Trainer(object):
                     for name, param in self.net.named_parameters():
                         if param.grad is not None and torch.isnan(param.grad).any():
                             print(f"Iteration {self.iteration}: NaN detected in gradient of {name}", file=sys.stderr)
+                        elif param.grad is not None and torch.abs(param.grad).max() > self.gradient_threshold:  # Define gradient_threshold as per your requirement
+                            print(f"Iteration {self.iteration}: Large gradient detected in {name} with max value {torch.abs(param.grad).max()}", file=sys.stderr)
+                        elif param.grad is None: 
+                            print(f"Iteration {self.iteration}: Gradient {name} is detected None", file=sys.stderr)
+                
                     self.optimizer.step()
 
                 self.iteration += 1
@@ -378,7 +394,7 @@ class Trainer(object):
                         self.writer.add_scalar(
                             "Loss/translations", loss_trans.item(), self.iteration
                         )
-                        elapsed_time = time.time() - self.start_training_time
+                        elapsed_time = time.time() - self.start_time
 
                         self.writer.add_scalar(
                             'elapsed_time_secs',  elapsed_time, self.iteration
@@ -388,7 +404,7 @@ class Trainer(object):
                             'Loss/train': loss.item(),
                             'Loss/rotations': loss_rot.item(),
                             'Loss/translations': loss_trans.item(),
-                            'iteration': self.iteration
+                            'iteration': self.iteration,
                             'elapsed_time_secs': elapsed_time,
                         })
 
@@ -520,7 +536,19 @@ class Trainer(object):
         )
 
         self.writer.add_figure("Translation Visualization", fig, self.iteration)
-        wandb.log({'translation_visualization': fig})
+
+
+# Save figure to a BytesIO buffer and then log it to wandb
+import matplotlib.pyplot as plt
+import io
+fig = plt.figure(num=1, figsize=(12, 6))
+buffer = io.BytesIO()
+fig.savefig(buffer, format='png')
+buffer.seek(0)
+        wandb.log({'translation_visualization': wandb.Image(Image.open(buffer))})
+        buffer.close()
+
+        # wandb.log({'translation_visualization': fig})
 
         fig.clear()
         plt.close(fig)
