@@ -27,6 +27,7 @@ from torch.nn import L1Loss
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 from PIL import Image
+from eval import evaluate_coordinate_ascent, evaluate_mst
 
 from dataset import TRAINING_CATEGORIES, get_dataloader
 from models import RelPose
@@ -536,9 +537,7 @@ class Trainer(object):
 
         self.writer.add_figure("Translation Visualization", fig, self.iteration)
 
-
-# Save figure to a BytesIO buffer and then log it to wandb
-        fig = plt.figure(num=1, figsize=(12, 6))
+        # Save figure to a BytesIO buffer and then log it to wandb
         buffer = io.BytesIO()
         fig.savefig(buffer, format='png')
         buffer.seek(0)
@@ -582,6 +581,8 @@ class Trainer(object):
                 f"Visualization {batch}", full_image, self.iteration, dataformats="HWC"
             )
             print("Visualizing for batch")
+
+    def 
 
 
 
