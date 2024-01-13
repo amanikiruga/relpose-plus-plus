@@ -540,7 +540,6 @@ class Trainer(object):
 
         # Save figure to a BytesIO buffer and then log it to wandb
         
-        fig = plt.figure(num=1, figsize=(12, 6))
         buffer = io.BytesIO()
         fig.savefig(buffer, format='png')
         buffer.seek(0)
