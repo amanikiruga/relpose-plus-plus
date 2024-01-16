@@ -411,7 +411,7 @@ class Trainer(object):
                     
 
                     # Log visualization to board
-                    if True: #self.iteration % self.interval_visualize == 0 and n < 5:
+                    if self.iteration % self.interval_visualize == 0 and n < 5:
                         images = images[: self.num_visualize]
                         relative_rotations = relative_rotations[: self.num_visualize]
                         probabilities = torch.softmax(logits, dim=-1)
@@ -426,8 +426,8 @@ class Trainer(object):
                             ind=batch["ind"],
                         )
                         self.save_histograms(predicted_translations, truth, loss_trans)
-                        with torch.no_grad(): 
-                            self.compute_rotation_and_translations(self.net, images = images, crop_params = crop_params)
+                        # with torch.no_grad(): 
+                        #     self.compute_rotation_and_translations(self.net, images = images, crop_params = crop_params)
 
 
                     # Clear old checkpoints
