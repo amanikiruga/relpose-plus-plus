@@ -408,8 +408,10 @@ class Trainer(object):
                             'elapsed_time_secs': elapsed_time,
                         })
 
+                    
+
                     # Log visualization to board
-                    if self.iteration % self.interval_visualize == 0 and n < 5:
+                    if True: #self.iteration % self.interval_visualize == 0 and n < 5:
                         images = images[: self.num_visualize]
                         relative_rotations = relative_rotations[: self.num_visualize]
                         probabilities = torch.softmax(logits, dim=-1)
@@ -424,6 +426,9 @@ class Trainer(object):
                             ind=batch["ind"],
                         )
                         self.save_histograms(predicted_translations, truth, loss_trans)
+                        with torch.no_grad(): 
+                            self.compute_rotation_and_translations(self.net, images = images, crop_params = crop_params)
+
 
                     # Clear old checkpoints
                     if self.iteration % self.interval_delete_checkpoint == 0:
@@ -582,7 +587,62 @@ class Trainer(object):
             )
             print("Visualizing for batch")
 
-    def 
+    def plotly_scene_visualization(R_pred, T_pred, name):
+        # Construct cameras and visualize scene for quick solution
+        cameras_pred = FoVPerspectiveCameras(R=R_pred, T=T_pred)
+        scenes = {name: {}}
+
+        for i in range(num_frames):
+            scenes[name][i] = FoVPerspectiveCameras(R=R_pred[i, None], T=T_pred[i, None])
+
+        fig = plot_scene(
+            scenes,
+            camera_scale=0.03,
+            ncols=2,
+        )
+        fig.update_scenes(aspectmode="data")
+
+        cmap = plt.get_cmap("hsv")
+        for i in range(num_frames):
+            fig.data[i].line.color = matplotlib.colors.to_hex(cmap(i / (num_frames)))
+
+        wandb.log({f'camera_visualizations': fig})
+
+    def compute_rotation_and_translations(model, images, crop_params): 
+        # Quickly initialize a coarse set of poses using MST reasoning
+        batched_images, batched_crop_params = images.unsqueeze(0), crop_params.unsqueeze(0)
+
+        _, hypothesis = evaluate_mst(
+            model=model,
+            images=batched_images,
+            crop_params=batched_crop_params,
+        )
+        R_pred = np.stack(hypothesis)
+
+
+        # Regress to optimal translation
+        with torch.no_grad():
+            _, _, T_pred = model(
+                images=batched_images,
+                crop_params=batched_crop_params,
+            )
+
+
+        # Search for optimal rotation via coordinate ascent.
+        # This should take less than 30 seconds.
+        print("Iteratively finetuning the initial MST solution.")
+        _, hypothesis = evaluate_coordinate_ascent(
+            model=model,
+            images=batched_images,
+            crop_params=batched_crop_params,
+        )
+        R_final = np.stack(hypothesis)
+
+        # Construct cameras and visualize scene for best solution
+        plotly_scene_visualization(R_final, T_pred, "Final Refined Cameras")
+
+        # Visualize cropped and resized images
+        # view_color_coded_images_from_tensor(images)
 
 
 
