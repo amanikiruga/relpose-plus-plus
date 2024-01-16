@@ -45,7 +45,8 @@ def get_model(
         num_pe_bases=8,
         hidden_size=256,
         num_images=25,
-        feature_dim=1280,
+        feature_dim=2048,
+        input_dim = 184320,
     )
     relpose.to(device)
 
